@@ -3,7 +3,7 @@ struct dmi_entry {
 	unsigned char type;
 	unsigned char length;
 	unsigned short handle;
-};
+} __attribute__((packed));
 
 enum { 
 	DMI_MEMORY_ARRAY = 16,
@@ -62,10 +62,10 @@ struct dmi_memarray_addr {
 }  __attribute__((packed));
 
 int opendmi(void);
-void dmi_decodeaddr(unsigned long addr);
+void dmi_decodeaddr(unsigned long long addr);
 int dmi_sanity_check(void);
 unsigned dmi_dimm_size(unsigned short size, char *unit);
-struct dmi_memdev **dmi_find_addr(unsigned long addr);
+struct dmi_memdev **dmi_find_addr(unsigned long long addr);
 void dmi_set_verbosity(int v);
 
 char *dmi_getstring(struct dmi_entry *e, unsigned number);

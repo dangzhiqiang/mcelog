@@ -24,7 +24,6 @@
 #include "nehalem.h"
 #include "bitfield.h"
 #include "memdb.h"
-#include "xeon75xx.h"
 
 /* See IA32 SDM Vol3B Appendix E.3.2 ff */
 
@@ -124,13 +123,18 @@ static char *mmm_desc[] = {
 	"Reserved 7"
 };
 
-void decode_memory_controller(u32 status)
+void decode_memory_controller(u32 status, u8 bank)
 {
 	char channel[30];
 	if ((status & 0xf) == 0xf) 
 		strcpy(channel, "unspecified"); 
-	else
-		sprintf(channel, "%u", status & 0xf);
+	else {
+        /* Fix for Knights Landing/Mill MIC */
+		if (cputype == CPU_KNIGHTS_LANDING || cputype == CPU_KNIGHTS_MILL)
+			sprintf(channel, "%u", (status & 0xf) + 3 * (bank == 15));
+		else
+			sprintf(channel, "%u", status & 0xf);
+	}
 	Wprintf("MEMORY CONTROLLER %s_CHANNEL%s_ERR\n", 
 		mmm_mnemonic[(status >> 4) & 7],
 		channel);
@@ -166,7 +170,6 @@ void xeon75xx_decode_model(struct mce *m, unsigned msize)
 		decode_bitfield(status, internal_error_status);
 		decode_numfield(status, internal_error_numbers);
 	}
-	xeon75xx_decode_dimm(m, msize);
 }
 
 /* Nehalem-EP specific DIMM decoding */

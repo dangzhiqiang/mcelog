@@ -1,6 +1,8 @@
 /* Copyright (C) 2006 Andi Kleen, SuSE Labs.
+   Portions Copyright (C) 2016 Sergio Gelato.
+
    Use SMBIOS/DMI to map address to DIMM description.
-   For reference see the SMBIOS specification 2.4
+   For reference see the SMBIOS specification 2.4, 3.0
 
    dmi is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public
@@ -55,9 +57,9 @@ struct anchor {
 } __attribute__((packed));
 
 static struct dmi_entry *entries;
-static int entrieslen;
+static size_t entrieslen;
 static int numentries;
-static int dmi_length;
+static size_t dmi_length;
 static struct dmi_entry **handle_to_entry;
 
 struct dmi_memdev **dmi_dimms; 
@@ -137,6 +139,59 @@ static void fill_handles(void)
 	}
 }
 
+static int append_sysfs_dmi_entry(unsigned char type, int instance)
+{
+	char filename[64];	/* 40 bytes should be enough */
+	char buf[1024];
+	int r;
+	ssize_t nr;
+	size_t l;
+	int fd;
+	r = snprintf(filename, sizeof(filename),
+		     "/sys/firmware/dmi/entries/%hhu-%d/raw",
+		     type, instance);
+	if (r < 0 || (unsigned int)r >= sizeof(filename)) {
+		Eprintf("Can't build pathname for DMI type %hhu instance %d\n",
+			type, instance);
+		return 0;
+	}
+	fd = open(filename, O_RDONLY);
+	if (fd == (-1)) {
+		if (errno != ENOENT)
+			perror(filename);
+		return 0;
+	}
+	l = dmi_length;
+	for (;;) {
+		nr = read(fd, buf, sizeof(buf));
+		if (nr < 0) {
+			if (errno == EINTR)
+				continue;
+			perror(filename);
+			close(fd);
+			return 0;
+		} else if (nr > 0) {
+			while (l + nr > entrieslen) {
+				entrieslen += 4096;
+				entries = xrealloc(entries, entrieslen);
+			}
+			memcpy((char *)entries+l, buf, nr);
+			l += nr;
+		} else {
+			numentries ++;
+			dmi_length = l;
+			close(fd);
+			return 1;
+		}
+	}
+}
+
+static void append_sysfs_dmi_entries(unsigned char type)
+{
+	int i;
+	for (i=0; append_sysfs_dmi_entry(type, i); i++) ;
+}
+
 static int get_efi_base_addr(size_t *address)
 {
 	FILE *efi_systab;
@@ -162,6 +217,8 @@ static int get_efi_base_addr(size_t *address)
 check_symbol:
 	while ((fgets(linebuf, sizeof(linebuf) - 1, efi_systab)) != NULL) {
 		char *addrp = strchr(linebuf, '=');
+		if (!addrp)
+			break;
 		*(addrp++) = '\0';
 
 		if (strcmp(linebuf, "SMBIOS") == 0) {
@@ -174,8 +231,10 @@ check_symbol:
 	if (fclose(efi_systab) != 0)
 		perror(filename);
 
-	if (!ret)
-		Eprintf("%s: SMBIOS entry point missing", filename);
+	if (!ret || !*address){
+		Lprintf("No valid SMBIOS entry point: Continue without DMI decoding");
+		return 0;
+	}
 
 	if (verbose)
 		printf("%s: SMBIOS entry point at 0x%08lx\n", filename,
@@ -186,10 +245,12 @@ check_symbol:
 int opendmi(void)
 {
 	struct anchor *a, *abase;
+	void *ebase;
 	void *p, *q;
 	int pagesize = getpagesize();
 	int memfd; 
-	unsigned corr;
+	off_t emapbase, corr;
+	size_t emapsize;
 	int err = -1;
 	const int segsize = 0x10000;
 	size_t entry_point_addr = 0;
@@ -197,6 +258,18 @@ int opendmi(void)
 
 	if (entries)
 		return 0;
+
+	if (access("/sys/firmware/dmi/entries/0-0/raw", R_OK) == 0) {
+		numentries = 0;
+		append_sysfs_dmi_entries(DMI_MEMORY_ARRAY);
+		append_sysfs_dmi_entries(DMI_MEMORY_DEVICE);
+		append_sysfs_dmi_entries(DMI_MEMORY_ARRAY_ADDR);
+		append_sysfs_dmi_entries(DMI_MEMORY_MAPPED_ADDR);
+		fill_handles();
+		collect_dmi_dimms();
+		return 0;
+	}
+
 	memfd = open("/dev/mem", O_RDONLY);
 	if (memfd < 0) { 
 		Eprintf("Cannot open /dev/mem for DMI decoding: %s",
@@ -258,17 +331,18 @@ fill_entries:
 	if (verbose) 
 		printf("DMI tables at %x, %u bytes, %u entries\n", 
 			a->table, a->length, a->numentries);
-	corr = a->table - round_down(a->table, pagesize); 
-	entrieslen = round_up(a->table + a->length, pagesize) -
-		round_down(a->table, pagesize);
- 	entries = mmap(NULL, entrieslen, 
-		       	PROT_READ, MAP_SHARED, memfd, 
-			round_down(a->table, pagesize));
-	if (entries == (struct dmi_entry *)-1) { 
+	emapbase = round_down(a->table, pagesize);
+	corr = a->table - emapbase;
+	emapsize = round_up(a->table + a->length, pagesize) - emapbase;
+	ebase = mmap(NULL, emapsize, PROT_READ, MAP_SHARED, memfd, emapbase);
+	if (ebase == MAP_FAILED) {
 		Eprintf("Cannot mmap SMBIOS tables at %x", a->table);
 		goto out_mmap;
 	}
-	entries = (struct dmi_entry *)(((char *)entries) + corr);
+	entrieslen = a->length;
+	entries = xalloc_nonzero(entrieslen);
+	memcpy(entries, (char *)ebase+corr, entrieslen);
+	munmap(ebase, emapsize);
 	numentries = a->numentries;
 	dmi_length = a->length;
 	fill_handles();
@@ -301,13 +375,15 @@ static char *form_factors[] = {
 	"?",
 	"Other", "Unknown", "SIMM", "SIP", "Chip", "DIP", "ZIP", 
 	"Proprietary Card", "DIMM", "TSOP", "Row of chips", "RIMM",
-	"SODIMM", "SRIMM"
+	"SODIMM", "SRIMM", "FB-DIMM"
 };
 static char *memory_types[] = {
 	"?",
 	"Other", "Unknown", "DRAM", "EDRAM", "VRAM", "SRAM", "RAM",
 	"ROM", "FLASH", "EEPROM", "FEPROM", "EPROM", "CDRAM", "3DRAM",
-	"SDRAM", "SGRAM", "RDRAM", "DDR", "DDR2"
+	"SDRAM", "SGRAM", "RDRAM", "DDR", "DDR2", "DDR2 FB-DIMM",
+	"Reserved 0x15", "Reserved 0x16", "Reserved 0x17", "DDR3",
+	"FBD2", "DDR4", "LPDDR", "LPDDR2", "LPDDR3", "LPDDR4"
 };
 
 #define LOOKUP(array, val, buf) \
@@ -318,7 +394,8 @@ static char *memory_types[] = {
 static char *type_details[16] = {
 	"Reserved", "Other", "Unknown", "Fast-paged", "Static Column",
 	"Pseudo static", "RAMBUS", "Synchronous", "CMOS", "EDO",
-	"Window DRAM", "Cache DRAM", "Non-volatile", "Res13", "Res14", "Res15"
+	"Window DRAM", "Cache DRAM", "Non-volatile", "Registered",
+	"Unbuffered", "LRDIMM"
 }; 
 
 static void dump_type_details(unsigned short td)
@@ -331,7 +408,7 @@ static void dump_type_details(unsigned short td)
 			Wprintf("%s ", type_details[i]);
 }
 
-static void dump_memdev(struct dmi_memdev *md, unsigned long addr)
+static void dump_memdev(struct dmi_memdev *md, unsigned long long addr)
 {
 	char tmp[20];
 	char unit[10];
@@ -340,7 +417,7 @@ static void dump_memdev(struct dmi_memdev *md, unsigned long addr)
 	if (md->header.length < 
 			offsetof(struct dmi_memdev, manufacturer)) { 
 		if (verbose > 0)
-			printf("Memory device for address %lx too short %u\n",
+			printf("Memory device for address %llx too short %u\n",
 			       addr, md->header.length);
 		return;
 	}	
@@ -494,7 +571,7 @@ int dmi_sanity_check(void)
 						dmi_dimms[i]->device_locator);
 			if (!strcmp(b, loc)) {
 				if (verbose > 0)
-					printf("Ambigious locators `%s'<->`%s'."
+					printf("Ambiguous locators `%s'<->`%s'."
 					       FAILED, b, loc);
 				return 0;
 			}
@@ -532,7 +609,7 @@ dump_ranges(struct dmi_memdev_addr **ranges, struct dmi_memdev **dmi_dimms)
 			DMIGET(dmi_dimms[i],device_set));
 }
 
-struct dmi_memdev **dmi_find_addr(unsigned long addr)
+struct dmi_memdev **dmi_find_addr(unsigned long long addr)
 {
 	struct dmi_memdev **devs; 
 	int i, k;
@@ -576,7 +653,7 @@ struct dmi_memdev **dmi_find_addr(unsigned long addr)
 	return devs;
 }
 
-void dmi_decodeaddr(unsigned long addr)
+void dmi_decodeaddr(unsigned long long addr)
 {
 	struct dmi_memdev **devs = dmi_find_addr(addr);
 	if (devs[0]) { 
@@ -585,7 +662,7 @@ void dmi_decodeaddr(unsigned long addr)
 		for (i = 0; devs[i]; i++) 
 			dump_memdev(devs[i], addr);
 	} else { 
-		Wprintf("No DIMM found for %lx in SMBIOS\n", addr);
+		Wprintf("No DIMM found for %llx in SMBIOS\n", addr);
 	}
 	free(devs);
 } 
@@ -619,11 +696,11 @@ void closedmi(void)
 {
 	if (!entries) 
 		return;
-	munmap(entries, entrieslen);
-	entries = NULL;
 	FREE(dmi_dimms);
 	FREE(dmi_arrays);
 	FREE(dmi_ranges);
 	FREE(dmi_array_ranges);
 	FREE(handle_to_entry);
+	FREE(entries);
+	entrieslen = 0;
 }

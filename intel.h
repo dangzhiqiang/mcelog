@@ -18,5 +18,16 @@ extern int memory_error_support;
 	case CPU_SANDY_BRIDGE: \
 	case CPU_IVY_BRIDGE: \
 	case CPU_IVY_BRIDGE_EPEX: \
-	case CPU_HASWELL
+	case CPU_HASWELL: \
+	case CPU_HASWELL_EPEX: \
+	case CPU_BROADWELL: \
+	case CPU_BROADWELL_DE: \
+	case CPU_BROADWELL_EPEX: \
+	case CPU_ATOM:	\
+	case CPU_KNIGHTS_LANDING: \
+	case CPU_KNIGHTS_MILL: \
+	case CPU_SKYLAKE: \
+	case CPU_SKYLAKE_XEON: \
+	case CPU_KABYLAKE: \
+	case CPU_DENVERTON
 

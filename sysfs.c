@@ -37,10 +37,10 @@ char *read_field(char *base, char *name)
 
 	asprintf(&fn, "%s/%s", base, name);
 	fd = open(fn, O_RDONLY);
+	free(fn);
 	if (fstat(fd, &st) < 0)
 		goto bad;		
 	buf = xalloc(st.st_size);
-	free(fn);
 	if (fd < 0) 
 		goto bad;
 	n = read(fd, buf, st.st_size);
@@ -81,10 +81,12 @@ unsigned read_field_map(char *base, char *name, struct map *map)
 		if (!strcmp(val, map->name))
 			break;
 	}
-	free(val);
-	if (map->name)
+	if (map->name) {
+		free(val);
 		return map->value;
+	}
 	Eprintf("sysfs field %s/%s has unknown string value `%s'\n", base, name, val);
+	free(val);
 	return -1;
 }
 

@@ -20,29 +20,29 @@ static void domsr(int cpu, int msr, int bit)
 			return;
 		default:
 			SYSERRprintf("Cannot open %s to set imc_log\n", fpath);
-			exit(1);
+			return;
 		}
 	}
 	if (pread(fd, &data, sizeof data, msr) != sizeof data) {
 		SYSERRprintf("Cannot read MSR_ERROR_CONTROL from %s\n", fpath);
-		exit(1);
+		goto out;
 	}
 	data |= bit;
 	if (pwrite(fd, &data, sizeof data, msr) != sizeof data) {
 		SYSERRprintf("Cannot write MSR_ERROR_CONTROL to %s\n", fpath);
-		exit(1);
+		goto out;
 	}
 	if (pread(fd, &data, sizeof data, msr) != sizeof data) {
 		SYSERRprintf("Cannot re-read MSR_ERROR_CONTROL from %s\n", fpath);
-		exit(1);
+		goto out;
 	}
-	if ((data & bit) == 0) {
-		SYSERRprintf("Failed to set imc_log on cpu %d\n", cpu);
-		exit(1);
-	}
+	if ((data & bit) == 0)
+		Lprintf("No DIMM detection available on cpu %d (normal in virtual environments)\n", cpu);
+out:
 	close(fd);
 }
 
+/* XXX: assumes all CPUs are already onlined. */
 void set_imc_log(int cputype)
 {
 	int cpu, ncpus = sysconf(_SC_NPROCESSORS_CONF);
@@ -51,9 +51,12 @@ void set_imc_log(int cputype)
 	switch (cputype) {
 	case CPU_SANDY_BRIDGE_EP:
 	case CPU_IVY_BRIDGE_EPEX:
+	case CPU_HASWELL_EPEX:
 		msr = 0x17f;	/* MSR_ERROR_CONTROL */
 		bit = 0x2;	/* MemError Log Enable */
 		break;
+	default:
+		return;
 	}
 
 	for (cpu = 0; cpu < ncpus; cpu++)

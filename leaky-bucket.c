@@ -25,19 +25,20 @@ time_t __attribute__((weak)) bucket_time(void)
 	return time(NULL);
 }
 
-static void bucket_age(const struct bucket_conf *c, struct leaky_bucket *b,
+void bucket_age(const struct bucket_conf *c, struct leaky_bucket *b,
 			time_t now)
 {
 	long diff;
-	unsigned age;
-
 	diff = now - b->tstamp;
-	age = (diff / (double)c->agetime) * c->capacity;
- 
-	if (age > b->count)
-		b->count = 0;
-	else
-		b->count -= age;
+	if (diff >= c->agetime) { 
+		unsigned age = (diff / (double)c->agetime) * c->capacity;
+		b->tstamp = now;
+		if (age > b->count)
+			b->count = 0;
+		else
+			b->count -= age;
+		b->excess = 0;
+	}
 }
 
 /* Account increase in leaky bucket. Return 1 if bucket overflowed. */
@@ -47,9 +48,11 @@ int __bucket_account(const struct bucket_conf *c, struct leaky_bucket *b,
 	if (c->capacity == 0)
 		return 0;
 	bucket_age(c, b, t);
-	if (b->count < c->capacity) {
-		b->count += inc;
-		b->tstamp = t;
+	b->count += inc; 
+	if (b->count >= c->capacity) {
+		b->excess += b->count;
+		/* should disable overflow completely in the same time unit */
+		b->count = 0;
 		return 1;
 	}
 	return 0;
@@ -69,7 +72,9 @@ static int timeconv(char unit, int *out)
 	case 'h': corr *= 60;
 	case 'm': corr *= 60;
 	case 0:   break;
-	default: return -1;
+	default:
+		*out = 1;
+		return -1;
 	}
 	*out = corr;
 	return 0;

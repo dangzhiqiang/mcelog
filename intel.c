@@ -24,7 +24,7 @@
 #include "page.h"
 #include "sandy-bridge.h"
 #include "ivy-bridge.h"
-#include "xeon75xx.h"
+#include "haswell.h"
 
 int memory_error_support;
 
@@ -33,7 +33,11 @@ void intel_cpu_init(enum cputype cpu)
 	if (cpu == CPU_NEHALEM || cpu == CPU_XEON75XX || cpu == CPU_INTEL ||
 	    cpu == CPU_SANDY_BRIDGE || cpu == CPU_SANDY_BRIDGE_EP ||
 	    cpu == CPU_IVY_BRIDGE || cpu == CPU_IVY_BRIDGE_EPEX ||
-	    cpu == CPU_HASWELL)
+	    cpu == CPU_HASWELL || cpu == CPU_HASWELL_EPEX || cpu == CPU_BROADWELL ||
+	    cpu == CPU_BROADWELL_DE || cpu == CPU_BROADWELL_EPEX ||
+	    cpu == CPU_KNIGHTS_LANDING || cpu == CPU_KNIGHTS_MILL ||
+	    cpu == CPU_SKYLAKE || cpu == CPU_SKYLAKE_XEON ||
+	    cpu == CPU_KABYLAKE || cpu == CPU_DENVERTON)
 		memory_error_support = 1;
 }
 
@@ -69,18 +73,43 @@ enum cputype select_intel_cputype(int family, int model)
 			return CPU_IVY_BRIDGE_EPEX;
 		else if (model == 0x3c || model == 0x45 || model == 0x46)
 			return CPU_HASWELL;
+		else if (model == 0x3f)
+			return CPU_HASWELL_EPEX;
+		else if (model == 0x3d)
+			return CPU_BROADWELL;
+		else if (model == 0x4f)
+			return CPU_BROADWELL_EPEX;
+		else if (model == 0x56)
+			return CPU_BROADWELL_DE;
+		else if (model == 0x57)
+			return CPU_KNIGHTS_LANDING;
+		else if (model == 0x85)
+			return CPU_KNIGHTS_MILL;
+		else if (model == 0x1c || model == 0x26 || model == 0x27 ||
+			 model == 0x35 || model == 0x36 || model == 0x36 ||
+			 model == 0x37 || model == 0x4a || model == 0x4c ||
+			 model == 0x4d || model == 0x5a || model == 0x5d)
+			return CPU_ATOM;
+		else if (model == 0x4e || model == 0x5e)
+			return CPU_SKYLAKE;
+		else if (model == 0x55)
+			return CPU_SKYLAKE_XEON;
+		else if (model == 0x8E || model == 0x9E)
+			return CPU_KABYLAKE;
+		else if (model == 0x5f)
+			return CPU_DENVERTON;
 		if (model > 0x1a) {
-			Eprintf("Family 6 Model %x CPU: only decoding architectural errors\n",
+			Eprintf("Family 6 Model %u CPU: only decoding architectural errors\n",
 				model);
 			return CPU_INTEL; 
 		}
 	}
 	if (family > 6) { 
-		Eprintf("Family %u Model %x CPU: only decoding architectural errors\n",
+		Eprintf("Family %u Model %u CPU: only decoding architectural errors\n",
 				family, model);
 		return CPU_INTEL;
 	}
-	Eprintf("Unknown Intel CPU type family %x model %x\n", family, model);
+	Eprintf("Unknown Intel CPU type family %u model %u\n", family, model);
 	return family == 6 ? CPU_P6OLD : CPU_GENERIC;
 }
 
@@ -104,9 +133,6 @@ static int intel_memory_error(struct mce *m, unsigned recordlen)
 		switch (cputype) { 
 		case CPU_NEHALEM:
 			nehalem_memerr_misc(m, channel, dimm);
-			break;
-		case CPU_XEON75XX:
-			xeon75xx_memory_error(m, recordlen, channel, dimm);
 			break;
 		case CPU_SANDY_BRIDGE_EP:
 			sandy_bridge_ep_memerr_misc(m, channel, dimm);

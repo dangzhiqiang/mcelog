@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # simple test harness for mcelog daemon trigger test cases
 # ./test subdir [debugger]
 # run mcelog test in specific sub directory
@@ -16,6 +16,8 @@ if [ "$(whoami)" != "root" ] ; then
 	echo "Must run as root"
 	exit 1
 fi
+
+[ ! -f /dev/mce-inject ] && modprobe mce-inject
 
 echo "++++++++++++ running $1 test +++++++++++++++++++"
 
